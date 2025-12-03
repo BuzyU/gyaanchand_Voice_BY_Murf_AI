@@ -15,6 +15,20 @@ if (!DEEPGRAM_KEY) {
 }
 
 const app = express();
+
+// Enable CORS for Vercel frontend and local development
+app.use(cors({
+  origin: [
+    'https://gyaanchand-voice-ai.vercel.app',
+    'http://localhost:8080',
+    'http://localhost:5000',
+    'http://localhost:3000'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.static(path.join(__dirname)));
 
 const server = http.createServer(app);

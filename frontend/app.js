@@ -1,4 +1,8 @@
-const WS_URL = "ws://localhost:5000";
+// Connect to production backend on Render
+const WS_URL = window.location.hostname === "localhost"
+  ? "ws://localhost:5000"  // Local development
+  : "wss://gyaanchand-voice-ai.onrender.com";  // Production
+
 const ws = new WebSocket(WS_URL);
 ws.binaryType = "arraybuffer";
 
