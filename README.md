@@ -318,5 +318,4 @@ This project is created for the Murf Voice Agent Hackathon.
 
 🔗 **LinkedIn Post**: [Add your LinkedIn post link here]
 
-⭐ If you found this project interesting, please star the repository!#   g y a a n c h a n d _ V o i c e _ A I  
- 
+⭐ If you found this project interesting, please star the repository!
