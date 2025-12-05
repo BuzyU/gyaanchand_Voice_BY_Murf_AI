@@ -1,12 +1,31 @@
 # 🎙️ Gyaanchand Voice AI
 
-**A  intelligent voice assistant powered by state-of-the-art AI models and the world's fastest TTS API Murf AI.**
+**A  intelligent voice assistant powered by Murf Falcon**
 
 Created by **Umer Zingu**
 
-## 🎥 Demo Video
+##🎥 Demo Video
 
-[Watch the demo video here](#)
+This demo shows the full real-time pipeline in action:
+
+👉 Watch here:
+https://drive.google.com/drive/folders/1k3DuqfJZYQ6CRQcCfz2mnCF2UwGsQOjb?usp=drive_link
+
+🔍 What the video demonstrates
+
+1.Live microphone capture
+
+2.Real-time transcription (Deepgram Nova-2)
+
+3.Model routing (Gemini Flash / Groq)
+
+4.Fast TTS streaming (Murf AI Falcon)
+
+5.AI interruption handling
+
+6.UI status indicators updating live
+
+7.Weather + document query examples
 
 ---
 
@@ -127,39 +146,6 @@ Navigate to `http://localhost:5000`
 
 ---
 
-## 🚀 Deployment
-
-### Vercel Deployment
-
-1. **Install Vercel CLI**
-```bash
-npm i -g vercel
-```
-
-2. **Set up environment variables**
-```bash
-vercel env add DEEPGRAM_API_KEY
-vercel env add MURF_API_KEY
-vercel env add GEMINI_API_KEY
-vercel env add GROQ_API_KEY
-vercel env add OPENWEATHER_API_KEY
-```
-
-3. **Deploy**
-```bash
-vercel --prod
-```
-
-### Environment Variables on Vercel
-Add these as secrets in your Vercel project settings:
-- `deepgram_api_key`
-- `murf_api_key`
-- `gemini_api_key`
-- `groq_api_key`
-- `openweather_api_key`
-
----
-
 ## 📖 Usage Guide
 
 ### Basic Conversation
@@ -243,6 +229,19 @@ Gyaanchand remembers:
 3. **AI Processing** → Router → Gemini/Groq → Response
 4. **Speech Synthesis** → Murf AI → Audio chunks
 5. **Audio Playback** → WebSocket → Queue → Speakers
+
+
+[User voice] 
+      │  (microphone via browser)
+      ▼
+[Deepgram ASR] ── live transcription ──▶  
+      ▼  
+[Gemini LLM if fallback Grok LLM] ── generates response text ──▶  
+      ▼  
+[Murf Falcon TTS] ── generates audio ──▶  
+      ▼  
+[Browser Audio Output] ── user hears reply
+
 
 ---
 
