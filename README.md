@@ -1,6 +1,6 @@
 # 🎙️ Gyaanchand Voice AI
 
-**A  intelligent voice assistant powered by Murf Falcon**
+**A Personal intelligent voice assistant powered by Murf Falcon**
 
 Created by **Umer Zingu**
 
@@ -40,7 +40,7 @@ https://drive.google.com/drive/folders/1k3DuqfJZYQ6CRQcCfz2mnCF2UwGsQOjb?usp=dri
 - **Conversation Memory** - Remembers your name, location, and conversation context
 - **9 Natural Voices** - Choose from a variety of US and British English voices
 - **Smart Interruptions** - Naturally interrupt the AI mid-response
-- **Streaming Audio** - Audio starts playing before the full response is generated
+- **Parallel Streaming Audio** - Audio starts playing before the full response is generated using Chunk technique
 
 ### 🚀 Technical Highlights
 - **WebSocket Architecture** - Real-time bidirectional communication
@@ -74,7 +74,7 @@ Gyaanchand: "Currently in Pune, India, it's pleasant at 24°C.
   - Streaming audio support
 
 ### AI Intelligence
-- **Google Gemini 1.5** (Flash & Pro) - Advanced reasoning and document understanding
+- **Google Gemini 1.5** (Flash & Pro)  - Advanced reasoning and document understanding
 - **Groq Llama 3.3 70B** - Ultra-fast inference for quick responses
 
 ### Infrastructure
@@ -96,11 +96,11 @@ Gyaanchand: "Currently in Pune, India, it's pleasant at 24°C.
 ### Prerequisites
 - Node.js 16+ and npm
 - API keys for:
-  - Deepgram
-  - Murf AI
-  - Google Gemini
-  - Groq
-  - OpenWeather (optional)
+-Deepgram ASR	https://console.deepgram.com
+-Google Gemini	https://aistudio.google.com/app/apikey
+-Groq (Llama 3.3 / Grok fallback)	https://console.groq.com/keys
+-Murf Falcon TTS	https://dashboard.murf.ai/api
+-OpenWeather (optional)	https://home.openweathermap.org/api_keys
 
 ### Quick Start
 
@@ -115,7 +115,7 @@ cd gyaanchand-voice-ai
 npm install
 ```
 
-3. **Configure environment variables**
+2. **Configure environment variables**
 
 Create a `.env` file in the root directory:
 
@@ -134,6 +134,16 @@ OPENWEATHER_API_KEY=your_openweather_key_here
 # Server Configuration
 PORT=5000
 NODE_ENV=production
+```
+
+3. **Install dependencies**
+```bash
+npm install
+npm install express ws dotenv multer pdf-parse mammoth cors
+npm install @deepgram/sdk
+npm install @google/generative-ai
+npm install groq-sdk
+npm install node-fetch
 ```
 
 4. **Start the server**
