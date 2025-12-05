@@ -14,11 +14,17 @@ https://drive.google.com/drive/folders/1k3DuqfJZYQ6CRQcCfz2mnCF2UwGsQOjb?usp=dri
 🔍 What the video demonstrates
 
 1.Live microphone capture
+
 2.Real-time transcription (Deepgram Nova-2)
+
 3.Model routing (Gemini Flash / Groq)
+
 4.Fast TTS streaming (Murf AI Falcon)
+
 5.AI interruption handling
+
 6.UI status indicators updating live
+
 7.Weather + document query examples
 
 ---
