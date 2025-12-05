@@ -1,4 +1,4 @@
-// backend/intelligentRouter.js - ENHANCED with better responses and logging
+// backend/intelligentRouter.js - FIXED: Correct Gemini models + Better prompts
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Groq = require("groq-sdk");
 const crypto = require("crypto");
@@ -36,7 +36,7 @@ function getCachedResponse(key) {
 function setCachedResponse(key, response) {
   if (responseCache.size >= MAX_CACHE_SIZE) {
     const firstKey = responseCache.keys().next().value;
-    responseCache.delete(key);
+    responseCache.delete(firstKey);
   }
   responseCache.set(key, { response, timestamp: Date.now() });
   console.log(`💾 [CACHE] Stored response for key: ${key}`);
@@ -102,10 +102,12 @@ RESPONSE LENGTH RULES (CRITICAL):
 VOICE-OPTIMIZED SPEAKING STYLE:
 ✅ Clear structure with smooth transitions
 ✅ Natural, conversational tone
-✅ Use "Here's the thing", "Let me explain", "So basically"
+✅ Vary your sentence starters - don't repeat phrases
+✅ Use occasionally (not every response): "Well", "Actually", "You know", "So", "Basically"
 ✅ Short sentences (8-15 words) for easy listening
-✅ Reference memory naturally: "You mentioned...", "Like we discussed..."
+✅ Reference memory naturally: "You mentioned...", "Earlier you said..."
 ❌ Never: "As an AI...", robotic phrases
+❌ Don't overuse: "Here's the thing", "Let me explain" (use sparingly)
 
 STRUCTURED RESPONSES:
 For complex topics, use this format:
@@ -118,10 +120,11 @@ BE CONVERSATIONAL:
 - Use contractions naturally
 - Show personality while staying professional
 - Remember context from conversation
-- Give complete, helpful answers`;
+- Give complete, helpful answers
+- Vary your language - don't repeat the same phrases`;
 
   if (intent.type === "greeting") {
-    return basePrompt + `\n\nFor greetings: Keep it brief (20-30 words) but warm and welcoming.`;
+    return basePrompt + `\n\nFor greetings: Keep it brief (20-30 words) but warm and welcoming. Be natural and direct.`;
   }
   
   if (intent.type === "email" || intent.type === "calendar") {
@@ -129,7 +132,7 @@ BE CONVERSATIONAL:
   }
   
   if (hasDocument) {
-    return basePrompt + `\n\nDocument context provided. Extract key facts and provide structured analysis with specific details.`;
+    return basePrompt + `\n\nDOCUMENT CONTEXT PROVIDED: You have access to a document's content. Extract key facts and provide structured analysis with specific details from the document. Reference the document naturally.`;
   }
   
   if (intent.complexity === "complex") {
@@ -139,7 +142,18 @@ BE CONVERSATIONAL:
   return basePrompt;
 }
 
+// Add memoization cache
+const memoryContextCache = new Map();
+const MEMORY_CACHE_TTL = 30000; // 30 seconds
+
 function buildMemoryContext(memoryContext) {
+  const cacheKey = memoryContext.substring(0, 100);
+  const cached = memoryContextCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < MEMORY_CACHE_TTL) {
+    return cached.value;
+  }
+  
   if (!memoryContext || memoryContext.length < 10) return "";
   
   const lines = memoryContext.split('\n').filter(l => l.trim());
@@ -154,13 +168,17 @@ function buildMemoryContext(memoryContext) {
     }
   }
   
-  return compact.join('\n').substring(0, 250);
+  const result = compact.join('\n').substring(0, 250);
+  memoryContextCache.set(cacheKey, { value: result, timestamp: Date.now() });
+  
+  return result;
 }
 
+// ✅ FIXED: Use correct free-tier Gemini models
 function getGeminiFlashModel() {
   if (!geminiFlashModel) {
     geminiFlashModel = genAI.getGenerativeModel({ 
-      model: "**gemini-2.5-flash**", // Changed from gemini-1.5-flash
+      model: "gemini-1.5-flash", // ✅ CORRECTED: This is the free tier model
       generationConfig: { 
         temperature: 0.7, 
         topP: 0.85, 
@@ -175,7 +193,7 @@ function getGeminiFlashModel() {
 function getGeminiProModel() {
   if (!geminiProModel) {
     geminiProModel = genAI.getGenerativeModel({ 
-      model: "**gemini-2.5-pro**", // Changed from gemini-2.0-flash (which is also likely a mistype in the original code, as it's typically 'pro')
+      model: "gemini-1.5-pro", // ✅ CORRECTED: This is the free tier pro model
       generationConfig: { 
         temperature: 0.7, 
         topP: 0.9, 
@@ -278,6 +296,9 @@ async function routeRequest(text, memoryContext = "", documentContent = null, si
   console.log(`🧠 [INTENT-CLASSIFICATION]`);
   console.log(`   Type: ${intent.type} | Complexity: ${intent.complexity}`);
   console.log(`   Query: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+  if (documentContent) {
+    console.log(`   📄 Document available: ${documentContent.length} chars`);
+  }
   console.log(`${'='.repeat(70)}`);
 
   try {
@@ -298,16 +319,16 @@ async function routeRequest(text, memoryContext = "", documentContent = null, si
     let finalPrompt;
     let aiModel = "Unknown";
 
-    // Document queries
-    if (documentContent && (intent.type === "document" || /document|pdf|file/i.test(text))) {
+    // ✅ FIXED: Document queries with better prompt
+    if (documentContent && (intent.type === "document" || /document|pdf|file|summarize|uploaded/i.test(text))) {
       console.log("📄 [DOCUMENT-MODE] Detected - Using extended context");
       
-      finalPrompt = `${compactMemory ? 'Context: ' + compactMemory + '\n\n' : ''}Document content (first 3000 chars):
-${documentContent.substring(0, 3000)}
+      finalPrompt = `${compactMemory ? 'Previous conversation context:\n' + compactMemory + '\n\n' : ''}DOCUMENT CONTENT:
+${documentContent.substring(0, 3500)}
 
-Question: ${text}
+USER REQUEST: ${text}
 
-Provide a structured response (80-120 words, 5-8 sentences) with specific facts from the document.`;
+Provide a clear, structured response (80-120 words) with specific facts and details from the document above. Be natural and conversational.`;
       
       try {
         response = await callGeminiPro(finalPrompt, systemPrompt, signal);
@@ -323,7 +344,7 @@ Provide a structured response (80-120 words, 5-8 sentences) with specific facts 
     else if (intent.type === "greeting") {
       finalPrompt = `${compactMemory ? 'Context: ' + compactMemory + '\n\n' : ''}User: ${text}
 
-Respond warmly in 20-40 words (2-3 sentences).`;
+Respond warmly and naturally in 20-40 words (2-3 sentences). Be direct and friendly.`;
       
       try {
         response = await callGeminiFlash(finalPrompt, systemPrompt, signal);
@@ -339,7 +360,7 @@ Respond warmly in 20-40 words (2-3 sentences).`;
     else if (intent.complexity === "simple") {
       finalPrompt = `${compactMemory ? 'Context: ' + compactMemory + '\n\n' : ''}User: ${text}
 
-Answer clearly in 40-70 words (3-4 sentences).`;
+Answer clearly and naturally in 40-70 words (3-4 sentences). Vary your language.`;
       
       try {
         response = await callGeminiFlash(finalPrompt, systemPrompt, signal);
@@ -355,7 +376,7 @@ Answer clearly in 40-70 words (3-4 sentences).`;
     else if (intent.complexity === "medium") {
       finalPrompt = `${compactMemory ? 'Context: ' + compactMemory + '\n\n' : ''}User: ${text}
 
-Provide a helpful response in 70-110 words (5-7 sentences).`;
+Provide a helpful, natural response in 70-110 words (5-7 sentences). Use varied language.`;
       
       try {
         response = await callGeminiPro(finalPrompt, systemPrompt, signal);
@@ -371,7 +392,7 @@ Provide a helpful response in 70-110 words (5-7 sentences).`;
     else {
       finalPrompt = `${compactMemory ? 'Context: ' + compactMemory + '\n\n' : ''}User: ${text}
 
-Provide a thorough, well-structured response in 120-180 words (8-12 sentences). Use clear transitions and organize information logically.`;
+Provide a thorough, well-structured response in 120-180 words (8-12 sentences). Use clear transitions and organize information logically. Vary your sentence starters.`;
       
       try {
         response = await callGeminiPro(finalPrompt, systemPrompt, signal);
@@ -422,5 +443,18 @@ setInterval(() => {
     console.log(`🧹 [CACHE-CLEANUP] Removed ${cleaned} expired entries | Current size: ${responseCache.size}`);
   }
 }, 60000);
+
+// Graceful shutdown cleanup
+process.on('SIGTERM', () => {
+  console.log('🧹 [CACHE] Clearing cache on shutdown');
+  responseCache.clear();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('🧹 [CACHE] Clearing cache on shutdown');
+  responseCache.clear();
+  process.exit(0);
+});
 
 module.exports = routeRequest;

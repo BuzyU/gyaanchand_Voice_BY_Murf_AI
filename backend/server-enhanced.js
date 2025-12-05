@@ -1,4 +1,15 @@
-// backend/server-enhanced.js - PRODUCTION with comprehensive logging
+const LOG_LEVEL = process.env.LOG_LEVEL || 'INFO'; // DEBUG, INFO, WARN, ERROR
+
+const logger = {
+  debug: (...args) => { if (['DEBUG'].includes(LOG_LEVEL)) console.log('[DEBUG]', ...args); },
+  info: (...args) => { if (['DEBUG', 'INFO'].includes(LOG_LEVEL)) console.log('[INFO]', ...args); },
+  warn: (...args) => { if (['DEBUG', 'INFO', 'WARN'].includes(LOG_LEVEL)) console.warn('[WARN]', ...args); },
+  error: (...args) => console.error('[ERROR]', ...args)
+};
+
+// Replace all console.log with logger.info, etc.
+
+// backend/server-enhanced.js - FIXED: Proper session tracking
 require("dotenv").config({ path: require('path').join(__dirname, '../.env') });
 const http = require("http");
 const express = require("express");
@@ -46,7 +57,25 @@ const upload = multer({
   }
 });
 
+// ✅ FIX: Better session management with WebSocket mapping
 const sessionData = new Map();
+const wsToSessionMap = new WeakMap(); // Map WebSocket to session ID
+
+function getOrCreateSession(sessionId) {
+  if (!sessionData.has(sessionId)) {
+    sessionData.set(sessionId, { 
+      document: null, 
+      voiceId: 'en-US-terrell',
+      createdAt: Date.now(),
+      lastActivity: Date.now()
+    });
+    console.log(`🆕 [SESSION] Created: ${sessionId}`);
+  } else {
+    // Update last activity
+    sessionData.get(sessionId).lastActivity = Date.now();
+  }
+  return sessionData.get(sessionId);
+}
 
 app.post("/upload", upload.single("document"), async (req, res) => {
   console.log("\n" + "=".repeat(70));
@@ -70,48 +99,44 @@ app.post("/upload", upload.single("document"), async (req, res) => {
     const startTime = Date.now();
 
     if (ext === ".pdf") {
-      console.log("🔍 [PDF-PARSER] Extracting content...");
+      console.log("📖 [PDF-PARSER] Extracting content...");
       const dataBuffer = fs.readFileSync(filePath);
       const pdfData = await pdfParse(dataBuffer);
       documentText = pdfData.text;
       const elapsed = Date.now() - startTime;
       console.log(`✅ [PDF-PARSER] Success: ${pdfData.numpages} pages, ${documentText.length} chars in ${elapsed}ms`);
     } else if (ext === ".docx" || ext === ".doc") {
-      console.log("🔍 [DOCX-PARSER] Extracting content...");
+      console.log("📝 [DOCX-PARSER] Extracting content...");
       const result = await mammoth.extractRawText({ path: filePath });
       documentText = result.value;
       const elapsed = Date.now() - startTime;
       console.log(`✅ [DOCX-PARSER] Success: ${documentText.length} chars in ${elapsed}ms`);
     }
 
-    const sessionId = req.headers["x-session-id"] || "default";
-    
-    // Store in sessions
-    let stored = 0;
-    for (const [sid, session] of sessionData.entries()) {
-      if (sid === sessionId || stored === 0) {
-        session.document = {
-          filename: req.file.originalname,
-          content: documentText,
-          uploadedAt: new Date()
-        };
-        console.log(`💾 [SESSION-STORE] Stored in session: ${sid}`);
-        stored++;
-      }
-    }
-    
-    if (stored === 0) {
-      sessionData.set(sessionId, { 
-        document: {
-          filename: req.file.originalname,
-          content: documentText,
-          uploadedAt: new Date()
-        }, 
-        voiceId: 'en-US-terrell' 
+    // ✅ FIX: Use session ID from header or reject
+    const sessionId = req.headers["x-session-id"];
+    if (!sessionId) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ 
+        success: false, 
+        error: "Session ID required. Please refresh the page." 
       });
-      console.log(`💾 [SESSION-STORE] Created new session: ${sessionId}`);
     }
+    
+    const session = getOrCreateSession(sessionId);
+    
+    // Store document in session
+    session.document = {
+      filename: req.file.originalname,
+      content: documentText,
+      uploadedAt: new Date().toISOString(),
+      size: req.file.size
+    };
+    
+    console.log(`💾 [SESSION-STORE] Document stored in session: ${sessionId}`);
+    console.log(`📊 [SESSION-STORE] Content length: ${documentText.length} chars`);
 
+    // Cleanup temp file
     fs.unlinkSync(filePath);
     console.log(`🗑️ [CLEANUP] Temporary file removed`);
     
@@ -121,17 +146,45 @@ app.post("/upload", upload.single("document"), async (req, res) => {
       success: true,
       filename: req.file.originalname,
       size: req.file.size,
-      extracted: documentText.length
+      extracted: documentText.length,
+      sessionId: sessionId
     });
-  } catch (err) {
-    console.error(`❌ [UPLOAD-CRITICAL] ${err.message}`);
-    console.log("=".repeat(70) + "\n");
-    res.status(500).json({ success: false, error: err.message });
+} catch (err) {
+  console.error(`❌ [UPLOAD-CRITICAL] ${err.message}`);
+  
+  // ✅ FIX: Clean up temp file on error
+  if (req.file && fs.existsSync(req.file.path)) {
+    try {
+      fs.unlinkSync(req.file.path);
+      console.log(`🗑️ [CLEANUP] Temp file removed after error`);
+    } catch (cleanupErr) {
+      console.error(`❌ [CLEANUP-ERROR] ${cleanupErr.message}`);
+    }
   }
+  
+  console.log("=".repeat(70) + "\n");
+  res.status(500).json({ success: false, error: err.message });
+}
 });
 
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date(), sessions: sessionData.size });
+  const memUsage = process.memoryUsage();
+  
+  res.json({ 
+    status: "ok", 
+    timestamp: new Date(), 
+    uptime: process.uptime(),
+    sessions: {
+      active: sessionData.size,
+      total: sessionData.size
+    },
+    memory: {
+      heapUsed: `${(memUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+      heapTotal: `${(memUsage.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+      rss: `${(memUsage.rss / 1024 / 1024).toFixed(2)} MB`
+    },
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 const server = http.createServer(app);
@@ -143,17 +196,18 @@ function openDeepgramSocket(clientWs, sessionId) {
   console.log(`   Session: ${sessionId}`);
   console.log("=".repeat(70));
   
-  const url =
-    `wss://api.deepgram.com/v1/listen?` +
-    `model=nova-2&` +
-    `language=en-IN&` +
-    `encoding=linear16&` +
-    `sample_rate=16000&` +
-    `channels=1&` +
-    `punctuate=true&` +
-    `interim_results=true&` +
-    `endpointing=350&` +
-    `vad_events=true`;
+const url =
+  `wss://api.deepgram.com/v1/listen?` +
+  `model=nova-2&` +
+  `language=en-IN&` +
+  `encoding=linear16&` +
+  `sample_rate=16000&` +
+  `channels=1&` +
+  `punctuate=true&` +
+  `interim_results=true&` +
+  `endpointing=300&` + // ✅ Reduced from 350ms for faster response
+  `vad_events=true&` +
+  `smart_format=true`; // ✅ Better formatting
 
   const dgWs = new WebSocket(url, {
     headers: { Authorization: `Token ${DEEPGRAM_KEY}` },
@@ -256,7 +310,6 @@ function openDeepgramSocket(clientWs, sessionId) {
             console.log(`🎤 [SPEECH-RECOGNIZED]`);
             console.log(`   Text: "${transcript}"`);
             console.log(`   Confidence: ${(confidence * 100).toFixed(1)}%`);
-            console.log(`   Final: ${isFinal}`);
             console.log(`${'='.repeat(70)}`);
             
             if (transcriptTimeout) clearTimeout(transcriptTimeout);
@@ -295,20 +348,21 @@ function openDeepgramSocket(clientWs, sessionId) {
                     memoryContext += `Recent: ${recent.substring(0, 150)}\n`;
                   }
 
-                  // Get document
+                  // ✅ FIX: Get document from session
                   let documentContent = null;
                   const session = sessionData.get(sessionId);
                   
                   if (session?.document?.content) {
                     documentContent = session.document.content;
-                    console.log(`📄 [DOCUMENT] Using uploaded document: ${session.document.filename}`);
+                    console.log(`📄 [DOCUMENT] Using: ${session.document.filename}`);
+                    console.log(`📄 [DOCUMENT] Content: ${documentContent.length} chars`);
                   }
 
-                  // Check for action requests (email/calendar)
+                  // Check for action requests
                   const actionResult = await handleAction(transcript, transcript);
                   
                   if (actionResult) {
-                    console.log(`🎯 [ACTION] Action detected and processed`);
+                    console.log(`🎯 [ACTION] Processed`);
                     
                     clientWs.send(JSON.stringify({ 
                       type: "reply", 
@@ -330,14 +384,15 @@ function openDeepgramSocket(clientWs, sessionId) {
                     processingAudio = false;
                     clientWs.send(JSON.stringify({ type: "status", status: "Listening..." }));
                     
-                    console.log(`✅ [CYCLE] Action cycle complete\n`);
+                    console.log(`✅ [CYCLE] Complete\n`);
                     return;
                   }
 
-                  // Start AI processing
+                  // AI processing
                   currentTTSController = new AbortController();
                   
-                  console.log(`🤖 [AI-REQUEST] Sending to intelligent router`);
+                  console.log(`🤖 [AI-REQUEST] Routing`);
+                  
                   const aiReply = await routeRequest(
                     transcript, 
                     memoryContext, 
@@ -345,8 +400,7 @@ function openDeepgramSocket(clientWs, sessionId) {
                     currentTTSController.signal
                   );
 
-                  console.log(`💬 [AI-REPLY] "${aiReply.substring(0, 100)}${aiReply.length > 100 ? '...' : ''}"`);
-                  console.log(`📊 [AI-STATS] ${aiReply.length} chars | ${aiReply.split(' ').length} words`);
+                  console.log(`💬 [AI-REPLY] ${aiReply.length} chars | ${aiReply.split(' ').length} words`);
 
                   updateMemory(transcript, aiReply);
 
@@ -365,17 +419,16 @@ function openDeepgramSocket(clientWs, sessionId) {
                   
                   currentTTSController = null;
 
-                  console.log(`✅ [CYCLE] Processing cycle complete\n`);
+                  console.log(`✅ [CYCLE] Complete\n`);
                   
                   clientWs.send(JSON.stringify({ type: "status", status: "Listening..." }));
                   processingAudio = false;
                   
                 } catch (err) {
                   if (err.name === 'AbortError') {
-                    console.log(`⛔ [ABORT] Request aborted by user\n`);
+                    console.log(`⛔ [ABORT] User interrupted\n`);
                   } else {
-                    console.error(`❌ [PROCESSING-ERROR] ${err.message}`);
-                    console.error(err.stack);
+                    console.error(`❌ [ERROR] ${err.message}`);
                     clientWs.send(JSON.stringify({ 
                       type: "error", 
                       message: "Processing error: " + err.message 
@@ -391,7 +444,7 @@ function openDeepgramSocket(clientWs, sessionId) {
         }
       }
     } catch (e) {
-      console.error(`❌ [DEEPGRAM-ERROR] Parse error: ${e.message}`);
+      console.error(`❌ [DEEPGRAM-ERROR] ${e.message}`);
     }
   });
 
@@ -399,8 +452,8 @@ function openDeepgramSocket(clientWs, sessionId) {
     isOpen = false;
     if (keepAliveInterval) clearInterval(keepAliveInterval);
     if (transcriptTimeout) clearTimeout(transcriptTimeout);
-    console.log(`\n❌ [DEEPGRAM] Connection closed: Code ${code}`);
-    console.log(`📊 [STATS] Audio chunks sent: ${audioChunksSent}\n`);
+    console.log(`\n❌ [DEEPGRAM] Closed: Code ${code}`);
+    console.log(`📊 [STATS] Audio chunks: ${audioChunksSent}\n`);
   });
 
   dgWs.on("error", (e) => {
@@ -422,14 +475,10 @@ function openDeepgramSocket(clientWs, sessionId) {
 }
 
 wss.on("connection", (ws) => {
-  const sessionId = Math.random().toString(36).substring(7);
-  console.log(`\n👤 [CLIENT-CONNECT] New connection [${sessionId}]\n`);
-  
-  if (!sessionData.has(sessionId)) {
-    sessionData.set(sessionId, { document: null, voiceId: 'en-US-terrell' });
-  }
-  
+  let sessionId = null;
   let dgConnection = null;
+  
+  console.log(`\n👤 [CLIENT-CONNECT] New WebSocket connection\n`);
 
   ws.on("message", async (data, isBinary) => {
     if (isBinary && dgConnection?.isOpen()) {
@@ -445,14 +494,51 @@ wss.on("connection", (ws) => {
     try {
       const msg = JSON.parse(data.toString());
       
+      // ✅ FIX: Handle handshake with session ID
+      if (msg.type === "handshake") {
+        sessionId = msg.sessionId;
+        wsToSessionMap.set(ws, sessionId);
+        getOrCreateSession(sessionId); // Ensure session exists
+        
+        console.log(`🤝 [HANDSHAKE] Session linked: ${sessionId}`);
+        
+        // Update voice if provided
+        if (msg.voice) {
+          const session = sessionData.get(sessionId);
+          if (session) {
+            session.voiceId = msg.voice;
+          }
+        }
+        
+        ws.send(JSON.stringify({ 
+          type: "session_confirmed", 
+          sessionId: sessionId 
+        }));
+        return;
+      }
+      
       if (msg.type === "start_live") {
-        console.log(`🎙️ [CLIENT-REQUEST] Starting live transcription [${sessionId}]`);
+        // ✅ FIX: Use session ID from handshake or message
+        if (msg.sessionId) {
+          sessionId = msg.sessionId;
+          wsToSessionMap.set(ws, sessionId);
+        }
+        
+        if (!sessionId) {
+          ws.send(JSON.stringify({ 
+            type: "error", 
+            message: "No session ID. Please refresh the page." 
+          }));
+          return;
+        }
+        
+        console.log(`🎙️ [START-LIVE] Session: ${sessionId}`);
         ws.send(JSON.stringify({ type: "status", status: "Connecting..." }));
         dgConnection = openDeepgramSocket(ws, sessionId);
       }
 
       if (msg.type === "stop_live") {
-        console.log(`\n🛑 [CLIENT-REQUEST] Stopping live transcription [${sessionId}]\n`);
+        console.log(`\n🛑 [STOP-LIVE] Session: ${sessionId}\n`);
         if (dgConnection?.isOpen()) {
           try { dgConnection.dgWs.close(); } catch (e) {}
         }
@@ -461,55 +547,154 @@ wss.on("connection", (ws) => {
       }
 
       if (msg.type === "client_stop_tts") {
-        console.log(`⛔ [CLIENT-REQUEST] Stop TTS [${sessionId}]`);
+        console.log(`⛔ [STOP-TTS] Session: ${sessionId}`);
         if (dgConnection) dgConnection.cancelCurrentTTS();
         try { ws.send(JSON.stringify({ type: "stop_audio" })); } catch (e) {}
       }
 
       if (msg.type === "voice_change") {
-        const session = sessionData.get(sessionId);
-        if (session) {
+        const sid = msg.sessionId || sessionId;
+        if (sid) {
+          const session = getOrCreateSession(sid);
           session.voiceId = msg.voice;
-          console.log(`🎵 [VOICE-CHANGE] Updated to: ${msg.voice} [${sessionId}]`);
+          console.log(`🎵 [VOICE-CHANGE] ${msg.voice} [${sid}]`);
           ws.send(JSON.stringify({ type: "voice_changed", voice: msg.voice }));
         }
       }
     } catch (e) {}
   });
 
-  ws.on("close", () => {
-    console.log(`\n👋 [CLIENT-DISCONNECT] Session ended [${sessionId}]\n`);
-    if (dgConnection?.isOpen()) {
-      try { dgConnection.dgWs.close(); } catch (e) {}
+ws.on("close", () => {
+  console.log(`\n👋 [CLIENT-DISCONNECT] Session: ${sessionId || 'unknown'}\n`);
+  
+  // ✅ FIX: Ensure Deepgram connection is closed
+  if (dgConnection) {
+    if (dgConnection.isOpen()) {
+      try { 
+        dgConnection.cancelCurrentTTS();
+        dgConnection.dgWs.close(); 
+      } catch (e) {
+        console.error(`❌ [DG-CLOSE-ERROR] ${e.message}`);
+      }
     }
+    dgConnection = null; // Clear reference
+  }
+  
+  // Keep session for 5 minutes after disconnect
+  if (sessionId) {
     setTimeout(() => {
-      sessionData.delete(sessionId);
-      console.log(`🗑️ [CLEANUP] Session ${sessionId} removed from memory`);
+      if (sessionData.has(sessionId)) {
+        const session = sessionData.get(sessionId);
+        // Only delete if session hasn't been reused
+        if (Date.now() - session.lastActivity > 5 * 60 * 1000) {
+          sessionData.delete(sessionId);
+          console.log(`🗑️ [CLEANUP] Session ${sessionId} removed`);
+        }
+      }
     }, 5 * 60 * 1000);
-  });
+  }
 });
+});
+
+// Periodic cleanup of old sessions
+setInterval(() => {
+  const now = Date.now();
+  const timeout = 30 * 60 * 1000; // 30 minutes
+  let cleaned = 0;
+  
+  for (const [sessionId, session] of sessionData.entries()) {
+    if (now - session.lastActivity > timeout) {
+      sessionData.delete(sessionId);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 [CLEANUP] Removed ${cleaned} inactive sessions`);
+  }
+}, 10 * 60 * 1000); // Every 10 minutes
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log("\n" + "=".repeat(70));
   console.log("🚀 Gyaanchand - Production Voice AI Assistant");
   console.log("=".repeat(70));
-  console.log(`📡 WebSocket Server: ws://localhost:${PORT}`);
-  console.log(`📤 Document Upload: http://localhost:${PORT}/upload`);
-  console.log(`💚 Health Check: http://localhost:${PORT}/health`);
-  console.log(`\n🎙️ TECHNOLOGY STACK:`);
+  console.log(`📡 WebSocket: ws://localhost:${PORT}`);
+  console.log(`📤 Upload: http://localhost:${PORT}/upload`);
+  console.log(`💚 Health: http://localhost:${PORT}/health`);
+  console.log(`\n🎙️ STACK:`);
   console.log(`   • Creator: Umer Zingu`);
-  console.log(`   • ASR: Deepgram Nova-2 (Best-in-class speech recognition)`);
-  console.log(`   • TTS: Murf AI (Fastest, most efficient text-to-speech)`);
-  console.log(`   • AI: Google Gemini 1.5 Flash/Pro + Groq Llama 3.3 70B`);
-  console.log(`\n⚡ FEATURES:`);
-  console.log(`   • Smart response caching (5min TTL)`);
-  console.log(`   • Compact memory context`);
-  console.log(`   • Smooth voice transitions`);
-  console.log(`   • Interrupt handling`);
-  console.log(`   • Document analysis (PDF/DOCX)`);
-  console.log(`   • Gmail integration`);
-  console.log(`   • Google Calendar integration`);
-  console.log(`   • 9 natural voices`);
+  console.log(`   • ASR: Deepgram Nova-2`);
+  console.log(`   • TTS: Murf AI`);
+  console.log(`   • AI: Gemini 1.5 + Groq Llama 3.3 70B`);
   console.log("=".repeat(70) + "\n");
 });
+
+// Performance tracking
+const metrics = {
+  totalRequests: 0,
+  successfulRequests: 0,
+  failedRequests: 0,
+  averageResponseTime: 0,
+  responseTimes: []
+};
+
+function updateMetrics(success, responseTime) {
+  metrics.totalRequests++;
+  if (success) {
+    metrics.successfulRequests++;
+  } else {
+    metrics.failedRequests++;
+  }
+  
+  metrics.responseTimes.push(responseTime);
+  if (metrics.responseTimes.length > 100) {
+    metrics.responseTimes.shift();
+  }
+  
+  metrics.averageResponseTime = 
+    metrics.responseTimes.reduce((a, b) => a + b, 0) / metrics.responseTimes.length;
+}
+
+// Add endpoint to view metrics
+app.get("/metrics", (req, res) => {
+  res.json({
+    ...metrics,
+    successRate: (metrics.successfulRequests / metrics.totalRequests * 100).toFixed(2) + '%',
+    averageResponseTime: metrics.averageResponseTime.toFixed(2) + 'ms'
+  });
+});
+
+// Graceful shutdown
+let isShuttingDown = false;
+
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log(`\n📛 [SHUTDOWN] Received ${signal}, shutting down gracefully...`);
+  
+  // Stop accepting new connections
+  wss.close(() => {
+    console.log('✅ [SHUTDOWN] WebSocket server closed');
+  });
+  
+  server.close(() => {
+    console.log('✅ [SHUTDOWN] HTTP server closed');
+    
+    // Clean up resources
+    sessionData.clear();
+    console.log('✅ [SHUTDOWN] Sessions cleared');
+    
+    process.exit(0);
+  });
+  
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('⚠️ [SHUTDOWN] Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

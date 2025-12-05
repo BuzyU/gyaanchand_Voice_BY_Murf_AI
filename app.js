@@ -1,4 +1,4 @@
-// app.js - Optimized with functional voice toggle and better UX
+// app.js - FIXED: Proper session management
 const WS_URL = window.location.hostname === 'localhost' 
   ? 'ws://localhost:5000' 
   : `wss://${window.location.hostname}`;
@@ -11,6 +11,7 @@ let mediaStream = null;
 let isLive = false;
 let isConnected = false;
 let selectedVoice = 'en-US-terrell';
+let sessionId = null; // ✅ FIX: Store session ID globally
 
 // Audio playback queue
 let audioQueue = [];
@@ -32,14 +33,24 @@ const voiceSelector = document.getElementById('voiceSelector');
 
 console.log('🚀 Gyaanchand Voice AI - Initializing');
 
-// Voice selection handler with immediate feedback
+// ✅ FIX: Initialize session ID immediately
+function initSessionId() {
+  sessionId = sessionStorage.getItem('sessionId');
+  if (!sessionId) {
+    sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+    sessionStorage.setItem('sessionId', sessionId);
+  }
+  console.log('📝 Session ID:', sessionId);
+  return sessionId;
+}
+
+// Voice selection handler
 voiceSelector.onchange = (e) => {
   selectedVoice = e.target.value;
   const voiceName = voiceSelector.options[voiceSelector.selectedIndex].text;
   
   console.log('🎵 Voice changed to:', selectedVoice);
   
-  // Visual feedback with animation
   voiceSelector.style.transform = 'scale(1.05)';
   setTimeout(() => {
     voiceSelector.style.transform = 'scale(1)';
@@ -49,11 +60,11 @@ voiceSelector.onchange = (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ 
       type: 'voice_change', 
-      voice: selectedVoice 
+      voice: selectedVoice,
+      sessionId: sessionId // ✅ FIX: Include session ID
     }));
   }
   
-  // Show temporary confirmation
   const originalHTML = statusText.innerHTML;
   updateStatus(`🎵 Voice: ${voiceName}`, 'connected');
   
@@ -65,36 +76,48 @@ voiceSelector.onchange = (e) => {
 };
 
 // Initialize WebSocket connection
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 2000;
+
 function connectWebSocket() {
   ws = new WebSocket(WS_URL);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
     isConnected = true;
+    reconnectAttempts = 0; // Reset on successful connection
     updateStatus('✅ Connected - Ready to start', 'connected');
     liveBtn.disabled = false;
     console.log('✅ Connected to', WS_URL);
     
-    // Send initial voice preference
     ws.send(JSON.stringify({ 
-      type: 'voice_change', 
-      voice: selectedVoice 
+      type: 'handshake',
+      sessionId: sessionId,
+      voice: selectedVoice
     }));
   };
 
   ws.onclose = () => {
     isConnected = false;
-    updateStatus('❌ Disconnected - Reconnecting...', '');
     liveBtn.disabled = true;
     console.log('❌ Disconnected');
     
-    // Auto-reconnect after 2 seconds
-    setTimeout(() => {
-      if (!isConnected) {
-        console.log('🔄 Attempting reconnection...');
-        connectWebSocket();
-      }
-    }, 2000);
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      const delay = RECONNECT_DELAY * reconnectAttempts;
+      updateStatus(`🔄 Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`, '');
+      
+      setTimeout(() => {
+        if (!isConnected) {
+          console.log(`🔄 Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+          connectWebSocket();
+        }
+      }, delay);
+    } else {
+      updateStatus('❌ Connection failed. Please refresh page.', 'error');
+      alert('Connection lost. Please refresh the page to reconnect.');
+    }
   };
 
   ws.onerror = (e) => {
@@ -111,11 +134,11 @@ function connectWebSocket() {
         console.error('❌ Parse error:', e);
       }
     } else {
-      // Binary audio data
       await handleAudioData(evt.data);
     }
   };
 }
+
 
 // Handle JSON messages from server
 function handleMessage(msg) {
@@ -145,13 +168,35 @@ function handleMessage(msg) {
       console.log('🎵 TTS stream complete');
       break;
 
-    case 'error':
-      console.error('❌ Server error:', msg.message);
-      updateStatus('❌ Error: ' + msg.message, 'error');
-      break;
+case 'error':
+  console.error('❌ Server error:', msg.message);
+  
+  // ✅ FIX: User-friendly error messages
+  let userMessage = msg.message;
+  if (msg.message.includes('Deepgram')) {
+    userMessage = 'Speech recognition error. Please try again.';
+  } else if (msg.message.includes('Murf') || msg.message.includes('TTS')) {
+    userMessage = 'Voice synthesis error. Please try again.';
+  } else if (msg.message.includes('session')) {
+    userMessage = 'Session error. Please refresh the page.';
+  }
+  
+  updateStatus('❌ ' + userMessage, 'error');
+  
+  // Show alert for critical errors
+  if (msg.message.includes('session') || msg.message.includes('refresh')) {
+    setTimeout(() => {
+      alert(userMessage);
+    }, 500);
+  }
+  break;
       
     case 'voice_changed':
       console.log('✅ Server confirmed voice:', msg.voice);
+      break;
+      
+    case 'session_confirmed':
+      console.log('✅ Session confirmed:', msg.sessionId);
       break;
   }
 }
@@ -169,22 +214,31 @@ async function handleAudioData(data) {
 }
 
 // Process audio queue sequentially
-async function processAudioQueue() {
-  if (isPlaying || audioQueue.length === 0) return;
+// Global queue lock
+let queueLock = false;
 
+// Process audio queue sequentially
+async function processAudioQueue() {
+  if (queueLock || audioQueue.length === 0) return;
+
+  queueLock = true;
   isPlaying = true;
 
-  while (audioQueue.length > 0) {
-    const audioData = audioQueue.shift();
-    try {
-      await playAudioChunk(audioData);
-    } catch (err) {
-      console.error('❌ Playback error:', err);
+  try {
+    while (audioQueue.length > 0) {
+      const audioData = audioQueue.shift();
+      try {
+        await playAudioChunk(audioData);
+      } catch (err) {
+        console.error("❌ Playback error:", err);
+      }
     }
+  } finally {
+    isPlaying = false;
+    queueLock = false;
   }
-
-  isPlaying = false;
 }
+
 
 // Play individual audio chunk
 async function playAudioChunk(arrayBuffer) {
@@ -193,8 +247,17 @@ async function playAudioChunk(arrayBuffer) {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
 
+    // ✅ FIX: Handle suspended state (iOS/Safari requirement)
     if (audioContext.state === 'suspended') {
-      await audioContext.resume();
+      console.log('⏸️ AudioContext suspended, resuming...');
+      try {
+        await audioContext.resume();
+        console.log('▶️ AudioContext resumed');
+      } catch (resumeErr) {
+        console.error('❌ Resume failed:', resumeErr);
+        // Try recreating context
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
     }
 
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -202,10 +265,14 @@ async function playAudioChunk(arrayBuffer) {
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       source.onended = () => {
         console.log(`✅ Played ${audioBuffer.duration.toFixed(2)}s`);
         resolve();
+      };
+      source.onerror = (err) => {
+        console.error('❌ Source error:', err);
+        reject(err);
       };
       source.start(0);
     });
@@ -246,7 +313,6 @@ async function startLive() {
 
     console.log(`🎵 AudioContext: ${micContext.sampleRate}Hz`);
 
-    // AudioWorklet processor
     const audioProcessorCode = `
 class AudioProcessor extends AudioWorkletProcessor {
   float32ToInt16(float32Array) {
@@ -305,7 +371,11 @@ registerProcessor('audio-processor', AudioProcessor);
     source.connect(audioWorkletNode);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'start_live' }));
+      // ✅ FIX: Include session ID in start message
+      ws.send(JSON.stringify({ 
+        type: 'start_live',
+        sessionId: sessionId
+      }));
     }
 
     isLive = true;
@@ -313,7 +383,6 @@ registerProcessor('audio-processor', AudioProcessor);
     btnText.textContent = 'Stop';
     liveBtn.className = 'btn-main btn-stop';
     
-    // Animate button
     liveBtn.style.transform = 'scale(1.1)';
     setTimeout(() => {
       liveBtn.style.transform = 'scale(1)';
@@ -365,7 +434,6 @@ async function stopLive() {
   btnText.textContent = 'Start Live';
   liveBtn.className = 'btn-main btn-start';
   
-  // Animate button
   liveBtn.style.transform = 'scale(1.1)';
   setTimeout(() => {
     liveBtn.style.transform = 'scale(1)';
@@ -386,7 +454,7 @@ liveBtn.onclick = async () => {
   liveBtn.disabled = false;
 };
 
-// File upload handling
+// ✅ FIX: File upload with proper session ID
 fileInput.onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -405,7 +473,7 @@ fileInput.onchange = async (e) => {
       method: 'POST',
       body: formData,
       headers: {
-        'x-session-id': getSessionId()
+        'x-session-id': sessionId // ✅ FIX: Use consistent session ID
       }
     });
 
@@ -416,7 +484,6 @@ fileInput.onchange = async (e) => {
       updateStatus('✅ Document ready - Ask me about it!', 'connected');
       console.log('✅ Document uploaded:', result);
       
-      // Animate upload zone
       uploadZone.style.borderColor = '#34d399';
       setTimeout(() => {
         uploadZone.style.borderColor = '';
@@ -430,16 +497,6 @@ fileInput.onchange = async (e) => {
     alert('Upload failed: ' + err.message);
   }
 };
-
-// Session ID management
-function getSessionId() {
-  let sessionId = sessionStorage.getItem('sessionId');
-  if (!sessionId) {
-    sessionId = Math.random().toString(36).substring(7);
-    sessionStorage.setItem('sessionId', sessionId);
-  }
-  return sessionId;
-}
 
 // Drag and drop
 uploadZone.ondragover = (e) => {
@@ -461,7 +518,7 @@ uploadZone.ondrop = (e) => {
   }
 };
 
-// Display transcript
+// Display functions remain the same...
 function displayTranscript(text, isFinal) {
   if (transcriptArea.querySelector('.empty-state')) {
     transcriptArea.innerHTML = '';
@@ -486,7 +543,6 @@ function displayTranscript(text, isFinal) {
   }
 }
 
-// Display reply
 function displayReply(text, route) {
   if (replyArea.querySelector('.empty-state')) {
     replyArea.innerHTML = '';
@@ -502,7 +558,6 @@ function displayReply(text, route) {
   replyArea.insertBefore(div, replyArea.firstChild);
 }
 
-// Display memory
 function displayMemory(memory) {
   if (!memory || (!memory.userName && !memory.topic && (!memory.history || memory.history.length === 0))) {
     memoryArea.innerHTML = '<div class="empty-state">Gyaanchand will remember your conversation...</div>';
@@ -543,7 +598,6 @@ function displayMemory(memory) {
   memoryArea.innerHTML = html;
 }
 
-// Update status with icon
 function updateStatus(message, className) {
   const icons = {
     connected: '✅',
@@ -558,7 +612,6 @@ function updateStatus(message, className) {
   statusBar.className = 'status-bar ' + className;
 }
 
-// Get status class
 function getStatusClass(status) {
   if (status.includes('Listening')) return 'listening';
   if (status.includes('Thinking')) return 'thinking';
@@ -568,6 +621,7 @@ function getStatusClass(status) {
   return '';
 }
 
-// Initialize
+// ✅ FIX: Initialize session before connecting
+initSessionId();
 connectWebSocket();
 console.log('✅ App initialized - Voice:', selectedVoice);
