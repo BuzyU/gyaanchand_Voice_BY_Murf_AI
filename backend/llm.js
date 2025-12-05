@@ -90,7 +90,7 @@ USE INSTEAD:
 Remember: You're having a conversation, not writing an essay. Be quick, natural, and helpful.`;
 
 const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
+  model: "gemini-1.5-flash-latest",
   systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] }
 });
 

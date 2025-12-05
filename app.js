@@ -1,4 +1,4 @@
-// app.js - FIXED: Proper session management
+// app.js - UPDATED: Enhanced memory display with location and date
 const WS_URL = window.location.hostname === 'localhost' 
   ? 'ws://localhost:5000' 
   : `wss://${window.location.hostname}`;
@@ -11,7 +11,7 @@ let mediaStream = null;
 let isLive = false;
 let isConnected = false;
 let selectedVoice = 'en-US-terrell';
-let sessionId = null; // ✅ FIX: Store session ID globally
+let sessionId = null;
 
 // Audio playback queue
 let audioQueue = [];
@@ -33,14 +33,14 @@ const voiceSelector = document.getElementById('voiceSelector');
 
 console.log('🚀 Gyaanchand Voice AI - Initializing');
 
-// ✅ FIX: Initialize session ID immediately
+// Initialize session ID
 function initSessionId() {
   sessionId = sessionStorage.getItem('sessionId');
   if (!sessionId) {
     sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(7);
     sessionStorage.setItem('sessionId', sessionId);
   }
-  console.log('📝 Session ID:', sessionId);
+  console.log('🔑 Session ID:', sessionId);
   return sessionId;
 }
 
@@ -56,12 +56,11 @@ voiceSelector.onchange = (e) => {
     voiceSelector.style.transform = 'scale(1)';
   }, 200);
   
-  // Send to server if connected
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ 
       type: 'voice_change', 
       voice: selectedVoice,
-      sessionId: sessionId // ✅ FIX: Include session ID
+      sessionId: sessionId
     }));
   }
   
@@ -86,16 +85,17 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     isConnected = true;
-    reconnectAttempts = 0; // Reset on successful connection
-    updateStatus('✅ Connected - Ready to start', 'connected');
     liveBtn.disabled = false;
-    console.log('✅ Connected to', WS_URL);
-    
-    ws.send(JSON.stringify({ 
-      type: 'handshake',
-      sessionId: sessionId,
+    reconnectAttempts = 0;
+
+    ws.send(JSON.stringify({
+      type: "handshake",
+      sessionId,
       voice: selectedVoice
     }));
+
+    updateStatus("✅ Connected - Ready to start", "connected");
+    console.log("✅ WebSocket connected");
   };
 
   ws.onclose = () => {
@@ -110,13 +110,12 @@ function connectWebSocket() {
       
       setTimeout(() => {
         if (!isConnected) {
-          console.log(`🔄 Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+          console.log(`🔄 Reconnection attempt ${reconnectAttempts}`);
           connectWebSocket();
         }
       }, delay);
     } else {
-      updateStatus('❌ Connection failed. Please refresh page.', 'error');
-      alert('Connection lost. Please refresh the page to reconnect.');
+      updateStatus('❌ Connection failed. Refresh page.', 'error');
     }
   };
 
@@ -126,21 +125,16 @@ function connectWebSocket() {
   };
 
   ws.onmessage = async (evt) => {
-    if (typeof evt.data === 'string') {
-      try {
-        const msg = JSON.parse(evt.data);
-        handleMessage(msg);
-      } catch (e) {
-        console.error('❌ Parse error:', e);
-      }
+    if (typeof evt.data === "string") {
+      const msg = JSON.parse(evt.data);
+      handleMessage(msg);
     } else {
       await handleAudioData(evt.data);
     }
   };
 }
 
-
-// Handle JSON messages from server
+// Handle JSON messages
 function handleMessage(msg) {
   switch (msg.type) {
     case 'status':
@@ -165,34 +159,26 @@ function handleMessage(msg) {
       break;
 
     case 'tts_end':
-      console.log('🎵 TTS stream complete');
+      console.log('🎵 TTS complete');
       break;
 
-case 'error':
-  console.error('❌ Server error:', msg.message);
-  
-  // ✅ FIX: User-friendly error messages
-  let userMessage = msg.message;
-  if (msg.message.includes('Deepgram')) {
-    userMessage = 'Speech recognition error. Please try again.';
-  } else if (msg.message.includes('Murf') || msg.message.includes('TTS')) {
-    userMessage = 'Voice synthesis error. Please try again.';
-  } else if (msg.message.includes('session')) {
-    userMessage = 'Session error. Please refresh the page.';
-  }
-  
-  updateStatus('❌ ' + userMessage, 'error');
-  
-  // Show alert for critical errors
-  if (msg.message.includes('session') || msg.message.includes('refresh')) {
-    setTimeout(() => {
-      alert(userMessage);
-    }, 500);
-  }
-  break;
+    case 'error':
+      console.error('❌ Server error:', msg.message);
+      
+      let userMessage = msg.message;
+      if (msg.message.includes('Deepgram')) {
+        userMessage = 'Speech recognition error. Please try again.';
+      } else if (msg.message.includes('Murf') || msg.message.includes('TTS')) {
+        userMessage = 'Voice synthesis error. Please try again.';
+      } else if (msg.message.includes('session')) {
+        userMessage = 'Session error. Please refresh the page.';
+      }
+      
+      updateStatus('❌ ' + userMessage, 'error');
+      break;
       
     case 'voice_changed':
-      console.log('✅ Server confirmed voice:', msg.voice);
+      console.log('✅ Voice confirmed:', msg.voice);
       break;
       
     case 'session_confirmed':
@@ -201,11 +187,11 @@ case 'error':
   }
 }
 
-// Handle binary audio data
+// Handle audio data
 async function handleAudioData(data) {
   try {
     const arrayBuffer = data instanceof ArrayBuffer ? data : await data.arrayBuffer();
-    console.log(`📥 Audio chunk: ${(arrayBuffer.byteLength / 1024).toFixed(1)}KB`);
+    console.log(`📥 Audio: ${(arrayBuffer.byteLength / 1024).toFixed(1)}KB`);
     audioQueue.push(arrayBuffer);
     processAudioQueue();
   } catch (err) {
@@ -213,11 +199,9 @@ async function handleAudioData(data) {
   }
 }
 
-// Process audio queue sequentially
-// Global queue lock
+// Process audio queue
 let queueLock = false;
 
-// Process audio queue sequentially
 async function processAudioQueue() {
   if (queueLock || audioQueue.length === 0) return;
 
@@ -239,25 +223,16 @@ async function processAudioQueue() {
   }
 }
 
-
-// Play individual audio chunk
+// Play audio chunk
 async function playAudioChunk(arrayBuffer) {
   try {
     if (!audioContext || audioContext.state === 'closed') {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
 
-    // ✅ FIX: Handle suspended state (iOS/Safari requirement)
     if (audioContext.state === 'suspended') {
-      console.log('⏸️ AudioContext suspended, resuming...');
-      try {
-        await audioContext.resume();
-        console.log('▶️ AudioContext resumed');
-      } catch (resumeErr) {
-        console.error('❌ Resume failed:', resumeErr);
-        // Try recreating context
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      }
+      console.log('⏸️ Resuming AudioContext...');
+      await audioContext.resume();
     }
 
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -266,34 +241,67 @@ async function playAudioChunk(arrayBuffer) {
     source.connect(audioContext.destination);
 
     return new Promise((resolve, reject) => {
-      source.onended = () => {
-        console.log(`✅ Played ${audioBuffer.duration.toFixed(2)}s`);
-        resolve();
-      };
-      source.onerror = (err) => {
-        console.error('❌ Source error:', err);
-        reject(err);
-      };
+      source.onended = resolve;
+      source.onerror = reject;
       source.start(0);
     });
   } catch (err) {
-    console.error('❌ Decode/play error:', err);
+    console.error('❌ Playback error:', err);
     throw err;
   }
 }
 
-// Stop audio playback
+// Stop audio
 function stopAudio() {
   audioQueue = [];
   isPlaying = false;
   console.log('🛑 Audio queue cleared');
 }
 
+// Improved microphone cleanup
+async function cleanupMicrophone() {
+  console.log('🧹 Cleaning up microphone...');
+  
+  // Stop AudioWorklet
+  if (audioWorkletNode) {
+    try {
+      audioWorkletNode.port.onmessage = null;
+      audioWorkletNode.disconnect();
+    } catch (e) {
+      console.log('⚠️ AudioWorklet cleanup warning:', e);
+    }
+    audioWorkletNode = null;
+  }
+
+  // Close AudioContext
+  if (micContext && micContext.state !== 'closed') {
+    try {
+      await micContext.close();
+    } catch (e) {
+      console.log('⚠️ AudioContext close warning:', e);
+    }
+    micContext = null;
+  }
+
+  // Stop media tracks
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => {
+      track.stop();
+      console.log('🛑 Track stopped:', track.label);
+    });
+    mediaStream = null;
+  }
+  
+  console.log('✅ Microphone cleanup complete');
+}
+
 // Start live recording
 async function startLive() {
   try {
     console.log('🎤 Requesting microphone...');
-    updateStatus('🎤 Requesting microphone access...', 'thinking');
+    updateStatus('🎤 Requesting microphone...', 'thinking');
+    
+    await cleanupMicrophone();
     
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -371,7 +379,6 @@ registerProcessor('audio-processor', AudioProcessor);
     source.connect(audioWorkletNode);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-      // ✅ FIX: Include session ID in start message
       ws.send(JSON.stringify({ 
         type: 'start_live',
         sessionId: sessionId
@@ -394,6 +401,8 @@ registerProcessor('audio-processor', AudioProcessor);
     console.error('❌ Microphone error:', err);
     updateStatus('❌ Microphone access denied', 'error');
     alert('Microphone access required: ' + err.message);
+    
+    await cleanupMicrophone();
   }
 }
 
@@ -404,26 +413,8 @@ async function stopLive() {
   
   isLive = false;
 
-  if (audioWorkletNode) {
-    try {
-      audioWorkletNode.disconnect();
-      audioWorkletNode.port.onmessage = null;
-    } catch (e) {}
-    audioWorkletNode = null;
-  }
-
-  if (micContext && micContext.state !== 'closed') {
-    try {
-      await micContext.close();
-    } catch (e) {}
-    micContext = null;
-  }
-
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(track => track.stop());
-    mediaStream = null;
-  }
-
+  await cleanupMicrophone();
+  
   stopAudio();
 
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -446,15 +437,22 @@ async function stopLive() {
 // Toggle live recording
 liveBtn.onclick = async () => {
   liveBtn.disabled = true;
-  if (!isLive) {
-    await startLive();
-  } else {
-    await stopLive();
+  try {
+    if (!isLive) {
+      await startLive();
+    } else {
+      await stopLive();
+    }
+  } catch (err) {
+    console.error('❌ Toggle error:', err);
+    updateStatus('❌ Error: ' + err.message, 'error');
+    await cleanupMicrophone();
+  } finally {
+    liveBtn.disabled = false;
   }
-  liveBtn.disabled = false;
 };
 
-// ✅ FIX: File upload with proper session ID
+// File upload
 fileInput.onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -473,7 +471,7 @@ fileInput.onchange = async (e) => {
       method: 'POST',
       body: formData,
       headers: {
-        'x-session-id': sessionId // ✅ FIX: Use consistent session ID
+        'x-session-id': sessionId
       }
     });
 
@@ -481,8 +479,7 @@ fileInput.onchange = async (e) => {
     
     if (result.success) {
       fileInfo.innerHTML = `✅ ${file.name}<br><small>${Math.round(file.size / 1024)}KB • ${result.extracted} chars extracted</small>`;
-      updateStatus('✅ Document ready - Ask me about it!', 'connected');
-      console.log('✅ Document uploaded:', result);
+      updateStatus('✅ Document ready!', 'connected');
       
       uploadZone.style.borderColor = '#34d399';
       setTimeout(() => {
@@ -518,7 +515,7 @@ uploadZone.ondrop = (e) => {
   }
 };
 
-// Display functions remain the same...
+// Display functions
 function displayTranscript(text, isFinal) {
   if (transcriptArea.querySelector('.empty-state')) {
     transcriptArea.innerHTML = '';
@@ -550,49 +547,51 @@ function displayReply(text, route) {
 
   const div = document.createElement('div');
   div.className = 'message reply';
-  div.innerHTML = `
-    <strong>Gyaanchand:</strong>
-    ${route ? `<span style="float: right; font-size: 0.75rem; color: #c084fc; background: rgba(168,85,247,0.1); padding: 3px 8px; border-radius: 8px;">${route}</span>` : ''}
-    <div style="margin-top: 8px;">${text}</div>
-  `;
+  div.innerHTML = `<strong>Gyaanchand:</strong><div style="margin-top: 8px;">${text}</div>`;
   replyArea.insertBefore(div, replyArea.firstChild);
 }
 
+// ✅ UPDATED: Enhanced memory display with location and date
 function displayMemory(memory) {
-  if (!memory || (!memory.userName && !memory.topic && (!memory.history || memory.history.length === 0))) {
-    memoryArea.innerHTML = '<div class="empty-state">Gyaanchand will remember your conversation...</div>';
+  if (!memory || (!memory.userName && !memory.location && !memory.date && (!memory.history || memory.history.length === 0))) {
+    memoryArea.innerHTML = '<div class="empty-state">Conversation memory will appear here...</div>';
     return;
   }
 
   let html = '';
 
+  // Display user name
   if (memory.userName) {
-    html += `
-      <div class="memory-item">
-        <div class="memory-label">👤 User Name</div>
-        <div style="font-size: 1.1rem; font-weight: 600;">${memory.userName}</div>
-      </div>
-    `;
+    html += `<div class="memory-item">
+      <div class="memory-label">👤 User</div>
+      <div style="font-size: 1.1rem; font-weight: 600;">${memory.userName}</div>
+    </div>`;
   }
 
-  if (memory.topic) {
-    html += `
-      <div class="memory-item">
-        <div class="memory-label">💡 Current Topic</div>
-        <div>${memory.topic}</div>
-      </div>
-    `;
+  // Display location
+  if (memory.location) {
+    html += `<div class="memory-item">
+      <div class="memory-label">📍 Location</div>
+      <div style="font-size: 1rem; font-weight: 600; color: #00d4ff;">${memory.location}</div>
+    </div>`;
   }
 
+  // Display date
+  if (memory.date) {
+    html += `<div class="memory-item">
+      <div class="memory-label">📅 Date</div>
+      <div style="font-size: 0.95rem; color: #ccc;">${memory.date}</div>
+    </div>`;
+  }
+
+  // Display recent conversation
   if (memory.history && memory.history.length > 0) {
-    html += `
-      <div class="memory-item">
-        <div class="memory-label">💬 Recent Context</div>
-        <div style="font-size: 0.9rem; color: #ccc; line-height: 1.6;">
-          ${memory.history.slice(-4).map(h => `<div style="margin: 6px 0;">• ${h.user?.substring(0, 50)}${h.user?.length > 50 ? '...' : ''}</div>`).join('')}
-        </div>
-      </div>
-    `;
+    html += `<div class="memory-item">
+      <div class="memory-label">💬 Recent</div>`;
+    html += memory.history.slice(-3).map(h => 
+      `<div style="font-size: 0.9rem; color: #ccc; margin: 6px 0;">• ${h.user?.substring(0, 50)}...</div>`
+    ).join('');
+    html += '</div>';
   }
 
   memoryArea.innerHTML = html;
@@ -616,12 +615,12 @@ function getStatusClass(status) {
   if (status.includes('Listening')) return 'listening';
   if (status.includes('Thinking')) return 'thinking';
   if (status.includes('Speaking')) return 'speaking';
-  if (status.includes('Error') || status.includes('failed')) return 'error';
-  if (status.includes('Connected') || status.includes('Ready')) return 'connected';
+  if (status.includes('Error')) return 'error';
+  if (status.includes('Connected')) return 'connected';
   return '';
 }
 
-// ✅ FIX: Initialize session before connecting
+// Initialize
 initSessionId();
 connectWebSocket();
-console.log('✅ App initialized - Voice:', selectedVoice);
+console.log('✅ App initialized');

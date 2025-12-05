@@ -1,8 +1,52 @@
 {
   "version": 2,
-  "public": true,
-  "cleanUrls": true,
-  "trailingSlash": false,
+  "builds": [
+    {
+      "src": "backend/server-enhanced.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "app.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "audio-processor.js",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/upload",
+      "dest": "backend/server-enhanced.js"
+    },
+    {
+      "src": "/health",
+      "dest": "backend/server-enhanced.js"
+    },
+    {
+      "src": "/ws",
+      "dest": "backend/server-enhanced.js"
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|svg|ico))",
+      "dest": "/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "DEEPGRAM_API_KEY": "@deepgram_api_key",
+    "MURF_API_KEY": "@murf_api_key",
+    "GEMINI_API_KEY": "@gemini_api_key",
+    "GROQ_API_KEY": "@groq_api_key",
+    "OPENWEATHER_API_KEY": "@openweather_api_key"
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -17,15 +61,9 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type"
+          "value": "Content-Type, x-session-id"
         }
       ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
     }
   ]
 }

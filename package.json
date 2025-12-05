@@ -1,20 +1,18 @@
 {
   "name": "gyaanchand-voice-agent",
-  "version": "3.0.0",
-  "description": "Natural Voice AI Assistant with Gmail and Calendar Integration",
+  "version": "4.0.0",
+  "description": "Natural Voice AI Assistant - Fast & Efficient",
   "main": "backend/server-enhanced.js",
   "scripts": {
     "start": "node backend/server-enhanced.js",
-    "dev": "nodemon backend/server-enhanced.js",
-    "oauth-setup": "node backend/oauth-setup.js"
+    "dev": "nodemon backend/server-enhanced.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.7.0",
-    "axios": "^1.6.0",
+    "axios": "^1.13.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "googleapis": "^128.0.0",
     "groq-sdk": "^0.37.0",
     "mammoth": "^1.6.0",
     "multer": "^1.4.5-lts.1",
@@ -29,9 +27,7 @@
     "murf-ai",
     "deepgram",
     "gemini",
-    "groq",
-    "gmail-api",
-    "calendar-api"
+    "groq"
   ],
   "author": "Umer Zingu",
   "license": "MIT"
